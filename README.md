@@ -83,7 +83,8 @@ git clone https://github.com/microhustlestack/muse-ai-omarchy.git
 cd muse-ai-omarchy
 
 # 1. Check the machine first. No changes are made.
-./bin/muse-ai doctor
+#    (bash form, so a fresh clone works even without the exec bit set)
+bash bin/muse-ai doctor
 
 # 2. Install the Muse AI menu launcher only. No sudo, no token needed.
 bash install.sh launcher
@@ -96,9 +97,9 @@ bash install.sh gadget
 # 4. Pair inside the 10 minute window, in the Muse app:
 #    Developer mode on, Settings, Devices, then pair this machine.
 
-# 5. Verify.
-./bin/muse-ai status
-./bin/muse-ai doctor
+# 5. Verify. After install.sh, muse-ai is on your PATH.
+muse-ai status
+muse-ai doctor
 ```
 
 Then, from your Muse chat, ask Muse to check the machine. A healthy
