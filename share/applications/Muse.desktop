@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Muse AI
+Comment=Muse by Meta, as an Omarchy webapp
+Exec=omarchy-launch-webapp https://muse.ai/
+Terminal=false
+Type=Application
+Icon=muse-ai
+Categories=Network;Chat;

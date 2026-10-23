@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+# muse-ai: Omarchy helper for Muse AI launcher + Muse Gadget service.
+# Wrapper only. The gadget service itself is Meta's official Muse
+# Gadgets Linux Device SDK, fetched from the official repo at install time.
+set -euo pipefail
+
+UPSTREAM_REPO="facebookincubator/muse-gadget-sdk"
+UPSTREAM_INSTALL_URL="https://raw.githubusercontent.com/${UPSTREAM_REPO}/main/linux/install.sh"
+MUSE_SVG_URL="https://muse.ai/images/favicon/app-squiggle.svg"
+APP_ID="muse-ai"
+
+info() { printf '  %s\n' "$*"; }
+ok()   { printf '  ok %s\n' "$*"; }
+warn() { printf '  ! %s\n' "$*" >&2; }
+fail() { printf '  x %s\n' "$*" >&2; exit 1; }
+
+banner() {
+  echo "WSTUNLTD (TM) Muse Ai x Omarchy Linux Project by JJUANtheBRAND (TM)"
+  echo "Wrapper for Meta's official Muse Gadgets SDK on Omarchy Linux."
+  echo
+}
+
+safety_notice() {
+  echo "SAFETY RULE"
+  echo "  The gadget service grants cloud command access to this machine,"
+  echo "  as your user, including sudo if your user has sudo."
+  echo "  Install it only on your own studio, demo, or personal machine."
+  echo "  Never install it on a machine you sell, ship, or give to a buyer."
+  echo
+}
+
+cmd_doctor() {
+  banner
+  local rc=0
+  echo "System"
+  if [[ -r /etc/os-release ]]; then grep -E '^(NAME|VERSION)=' /etc/os-release | sed 's/^/  /'; fi
+  info "arch: $(uname -m)"
+  case "$(uname -m)" in x86_64|aarch64) ok "arch accepted by upstream installer" ;; *) warn "arch not in upstream list (x86_64, aarch64)"; rc=1 ;; esac
+  info "user: $(whoami) (installer refuses root)"
+  [[ "$(id -u)" -ne 0 ]] && ok "not root" || { warn "running as root"; rc=1; }
+
+  echo "Bluetooth (needed for the pairing window only)"
+  if ls /sys/class/bluetooth/* >/dev/null 2>&1; then ok "controller present: $(ls /sys/class/bluetooth | tr '\n' ' ')"; else warn "no controller in /sys/class/bluetooth"; rc=1; fi
+  if command -v bluetoothctl >/dev/null 2>&1; then bluetoothctl show 2>/dev/null | grep -E 'Powered|Pairable' | sed 's/^/  /' || true; fi
+  systemctl is-active bluetooth >/dev/null 2>&1 && ok "bluetooth.service active" || warn "bluetooth.service not active"
+
+  echo "Gadget service"
+  if systemctl is-active musegadget >/dev/null 2>&1; then ok "musegadget service active"; else warn "musegadget service not active (not installed, or not started)"; fi
+
+  echo "Launcher"
+  if [[ -f "$HOME/.local/share/applications/Muse.desktop" ]] || [[ -f /usr/share/applications/Muse.desktop ]]; then ok "Muse AI menu entry present"; else warn "Muse AI menu entry not installed yet: muse-ai launcher"; fi
+
+  echo "Tools"
+  for t in curl git rsvg-convert omarchy-launch-webapp; do
+    command -v "$t" >/dev/null 2>&1 && info "$t: present" || info "$t: not found (only needed for some steps)"
+  done
+  return $rc
+}
+
+cmd_status() {
+  banner
+  systemctl is-active musegadget >/dev/null 2>&1 && ok "musegadget: active" || info "musegadget: not active"
+  [[ -f "$HOME/.local/share/applications/Muse.desktop" ]] && ok "launcher: installed (user)" || info "launcher: not in ~/.local/share/applications"
+  command -v musegadget >/dev/null 2>&1 && info "musegadget CLI: $(command -v musegadget)" || info "musegadget CLI: not on PATH yet"
+}
+
+install_icon() {
+  local tmp; tmp="$(mktemp -d)"
+  info "Downloading official Muse icon from muse.ai"
+  if ! curl -fsSL "$MUSE_SVG_URL" -o "$tmp/muse.svg"; then
+    warn "icon download failed, launcher will use a generic icon name"
+    rm -rf "$tmp"; return 0
+  fi
+  if command -v rsvg-convert >/dev/null 2>&1; then
+    local size
+    for size in 256 128 64 48 32; do
+      mkdir -p "$HOME/.local/share/icons/hicolor/${size}x${size}/apps"
+      rsvg-convert -w "$size" -h "$size" "$tmp/muse.svg" -o "$HOME/.local/share/icons/hicolor/${size}x${size}/apps/muse-ai.png"
+    done
+    ok "icon: muse-ai PNG renders installed (256 to 32 px)"
+  else
+    mkdir -p "$HOME/.local/share/icons"
+    cp "$tmp/muse.svg" "$HOME/.local/share/icons/muse-ai.svg"
+    warn "rsvg-convert not found, installed SVG icon instead. For PNG renders: sudo pacman -S librsvg"
+  fi
+  rm -rf "$tmp"
+  rm -rf "$HOME/.cache/thumbnails" 2>/dev/null || true
+}
+
+cmd_launcher() {
+  banner
+  mkdir -p "$HOME/.local/share/applications"
+  local src=""
+  if [[ -f "$(dirname "$0")/../share/applications/Muse.desktop" ]]; then
+    src="$(cd "$(dirname "$0")/.." && pwd)/share/applications/Muse.desktop"
+  elif [[ -f /usr/share/muse-ai-omarchy/Muse.desktop ]]; then
+    src="/usr/share/muse-ai-omarchy/Muse.desktop"
+  fi
+  if [[ -n "$src" && -f "$src" ]]; then
+    cp "$src" "$HOME/.local/share/applications/Muse.desktop"
+  else
+    cat > "$HOME/.local/share/applications/Muse.desktop" <<'EOF'
+[Desktop Entry]
+Name=Muse AI
+Comment=Muse by Meta, as an Omarchy webapp
+Exec=omarchy-launch-webapp https://muse.ai/
+Terminal=false
+Type=Application
+Icon=muse-ai
+Categories=Network;Chat;
+EOF
+  fi
+  install_icon
+  command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$HOME/.local/share/applications" >/dev/null 2>&1 || true
+  ok "launcher: ~/.local/share/applications/Muse.desktop (Name: Muse AI)"
+  info "Open Omarchy's launcher and search: Muse AI"
+}
+
+cmd_install_gadget() {
+  banner
+  safety_notice
+  [[ "$(id -u)" -ne 0 ]] || fail "refusing to run as root. Rerun as your normal user."
+  read -r -p "  Type INSTALL to continue on THIS machine only: " ans
+  [[ "$ans" == "INSTALL" ]] || fail "cancelled"
+  local tmp; tmp="$(mktemp -d)"
+  info "Downloading Meta's official installer:"
+  info "$UPSTREAM_INSTALL_URL"
+  curl -fsSL "$UPSTREAM_INSTALL_URL" -o "$tmp/install.sh" || fail "download failed"
+  echo
+  info "Review it before it runs: less $tmp/install.sh  (saved copy kept below)"
+  cp "$tmp/install.sh" "$HOME/.cache/muse-ai-upstream-install.sh" 2>/dev/null || true
+  local token=""
+  if [[ -n "${MUSE_SDK_TOKEN:-}" ]]; then
+    token="$MUSE_SDK_TOKEN"
+  else
+    read -r -s -p "  Paste your SDK token from gadgets.muse.ai (starts with mgst_, hidden): " token; echo
+  fi
+  [[ "$token" == mgst_* ]] || fail "that does not look like an mgst_ SDK token. Make a fresh one at gadgets.muse.ai, Account, SDK tokens."
+  info "Running the official installer. Expect the 'untested, Arch-based' warning on Omarchy. That is expected."
+  bash "$tmp/install.sh" --sdk-token "$token"
+  rm -rf "$tmp"
+  echo
+  ok "installer finished. Pair now, inside the window:"
+  cmd_pair_help
+}
+
+cmd_pair_help() {
+  cat <<'EOF'
+  Pairing, in order:
+  1. Phone close to this machine, Muse app open.
+  2. In the app: Developer mode on, then Settings, then Devices.
+  3. Start pairing and confirm on the phone.
+  4. After pairing, this machine stays connected over the network.
+     Bluetooth is not needed day to day, and no terminal must stay open.
+  5. Verify from your Muse chat: ask Muse for this machine's health,
+     then a harmless command test (whoami, hostname, uname -m).
+  6. From this machine, test the other direction:
+     musegadget send-user-msg "hello from Omarchy"
+EOF
+}
+
+cmd_uninstall() {
+  banner
+  rm -f "$HOME/.local/share/applications/Muse.desktop"
+  ok "launcher removed"
+  info "The gadget service is Meta's, remove it with the official path:"
+  info "re-download the upstream install.sh, then: bash install.sh --uninstall"
+}
+
+usage() {
+  banner
+  cat <<'EOF'
+Usage: muse-ai <command>
+  doctor           Check OS, arch, Bluetooth, service, launcher
+  status           Short status: paired service and launcher
+  launcher         Install or reinstall the Muse AI menu entry
+  install-gadget   Download Meta's official installer and run it
+  pair-help        Print the pairing steps in order
+  uninstall        Remove the launcher user install
+EOF
+}
+
+case "${1:-}" in
+  doctor) cmd_doctor ;;
+  status) cmd_status ;;
+  launcher) cmd_launcher ;;
+  install-gadget) cmd_install_gadget ;;
+  pair-help) cmd_pair_help ;;
+  uninstall) cmd_uninstall ;;
+  ""|-h|--help|help) usage ;;
+  *) warn "unknown command: $1"; usage; exit 1 ;;
+esac

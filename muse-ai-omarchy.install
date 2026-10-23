@@ -1,0 +1,8 @@
+post_install() {
+  echo "  Muse Ai x Omarchy installed: CLI is muse-ai, menu entry is Muse AI."
+  echo "  Check this machine first:  muse-ai doctor"
+  echo "  Gadget service is a separate, deliberate step on your OWN machine only:"
+  echo "    muse-ai install-gadget"
+  echo "  Never install the gadget service on a machine you sell or ship."
+}
+post_upgrade() { post_install; }
